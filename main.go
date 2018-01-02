@@ -1,51 +1,58 @@
+/*************************************************************************
+ * Copyright 2017 John Floren. All rights reserved.
+ * Contact: <john@jfloren.net>
+ *
+ * This software may be modified and distributed under the terms of the
+ * BSD 2-clause license. See the LICENSE file for details.
+ **************************************************************************/
+
 package main
 
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"os"
-	"strconv"
-	"path/filepath"
-	"io/ioutil"
-	"io"
-	"sort"
-	"os/user"
 	"os/exec"
+	"os/user"
+	"path/filepath"
+	"sort"
+	"strconv"
 )
 
 var (
 	zkRoot string
-	state	zkState
+	state  zkState
 )
 
 type zkState struct {
 	CurrentNote int
-	NextNoteId	int
-	Notes	map[int]NoteMeta
+	NextNoteId  int
+	Notes       map[int]NoteMeta
 }
 
 type NoteMeta struct {
-	Id	int
-	Title	string
+	Id       int
+	Title    string
 	Subnotes []int
-	Files []string
-	Parent	int
+	Files    []string
+	Parent   int
 }
 
 type Note struct {
 	NoteMeta
-	body	string
+	body string
 }
 
 func main() {
 	flag.Parse()
 
-	// All commands take the form "z <command> <command args>"
-	// Specifying simply "z" should show the current note's summary & subnotes
+	// All commands take the form "zk <command> <command args>"
+	// Specifying simply "zk" should show the current note's summary & subnotes
 	var cmd string
 	if len(flag.Args()) > 0 {
 		cmd = flag.Arg(0)
@@ -71,17 +78,17 @@ func main() {
 	case "init":
 		initDeck()
 	case "show", "s":
-		show(args)
+		showNote(args)
 	case "new", "n":
 		newNote(args)
 	case "up", "u":
 		if state.CurrentNote != 0 {
 			p := state.Notes[state.CurrentNote].Parent
 			changeLevel(p)
-			show([]string{})
+			showNote([]string{})
 		}
 	case "edit", "e":
-		edit(args)
+		editNote(args)
 	case "print", "p":
 		printNote(args)
 	default:
@@ -92,9 +99,9 @@ func main() {
 			}
 			// we've been given an argument, try to change to the specified note
 			changeLevel(id)
-			show([]string{})
+			showNote([]string{})
 		} else {
-			show([]string{})
+			showNote([]string{})
 		}
 	}
 
@@ -107,70 +114,6 @@ func initDeck() {
 	state.Notes = make(map[int]NoteMeta)
 	makeNote(0, "Top Level\n")
 	writeState()
-}
-
-func readState() {
-	p := filepath.Join(zkRoot, "state")
-	fd, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0755)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer fd.Close()
-
-	dec := json.NewDecoder(fd)
-	err = dec.Decode(&state)
-	if err != nil && err != io.EOF {
-		log.Fatalf("failure parsing state file: %v", err)
-	}
-}
-
-func writeState() {
-	p := filepath.Join(zkRoot, "state")
-	fd, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0755)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer fd.Close()
-
-	fd.Truncate(0)
-	fd.Seek(0, 0)
-	enc := json.NewEncoder(fd)
-	enc.Encode(state)
-	fd.Sync()
-}
-
-func readNoteMetadata(id int) (NoteMeta, error) {
-	var meta NoteMeta
-	p := filepath.Join(zkRoot, fmt.Sprintf("%d", id), "metadata")
-	fd, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0755)
-	if err != nil {
-		return meta, err
-	}
-	defer fd.Close()
-
-	dec := json.NewDecoder(fd)
-	err = dec.Decode(&meta)
-	if err != nil && err != io.EOF {
-		return meta, fmt.Errorf("failure parsing state file: %v", err)
-	}
-	return meta, nil
-}
-
-// infers where to write based on the metadata
-func writeNoteMetadata(meta NoteMeta) error {
-	p := filepath.Join(zkRoot, fmt.Sprintf("%d", meta.Id), "metadata")
-	fd, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0755)
-	if err != nil {
-		return err
-	}
-	defer fd.Close()
-
-	fd.Truncate(0)
-	fd.Seek(0, 0)
-	enc := json.NewEncoder(fd)
-	enc.Encode(meta)
-	fd.Sync()
-	return nil
 }
 
 // Read a note by id from the filesystem, updating our metadata map
@@ -215,14 +158,13 @@ func readNote(id int) (*Note, error) {
 	return result, nil
 }
 
-
 // This is called to set up the files for a new note, once the id has been determined.
 func makeNote(id int, body string) error {
 	// First verify that the id doesn't already exist
 	if m, ok := state.Notes[id]; ok {
 		return fmt.Errorf("a note with id %v already exists: %v", id, m)
 	}
-	meta := NoteMeta{ Id: id }
+	meta := NoteMeta{Id: id}
 	s := bufio.NewScanner(bytes.NewBuffer([]byte(body)))
 	if s.Scan() {
 		meta.Title = s.Text()
@@ -288,7 +230,7 @@ func newNote(args []string) {
 	state.NextNoteId++
 }
 
-func show(args []string) {
+func showNote(args []string) {
 	var targetNote int
 	var err error
 
@@ -322,7 +264,7 @@ func show(args []string) {
 
 	fmt.Printf("id:%d %s\n\n", note.Id, note.Title)
 	for _, sn := range subnotes {
-		fmt.Printf("[id:%d]    %s\n",sn.Id, sn.Title)
+		fmt.Printf("[id:%d]    %s\n", sn.Id, sn.Title)
 	}
 }
 
@@ -334,7 +276,7 @@ func changeLevel(id int) {
 	state.CurrentNote = id
 }
 
-func edit(args []string) {
+func editNote(args []string) {
 	var err error
 	target := state.CurrentNote
 	if len(args) == 1 {
