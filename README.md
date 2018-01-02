@@ -1,5 +1,4 @@
-zk: fast CLI note-taking 
-------------------------
+# zk: fast CLI note-taking 
 
 'zk' is a tool for making and organizing hierarchical notes at the command line. It tries to stay out of your way; I wrote it because the only way I'll take notes is if it's as easy as possible.
 
@@ -7,8 +6,7 @@ Every note gets a unique ID assigned at creation time. Notes are organized in a 
 
 zk remembers which note you've been working in. When you run a command, zk will act on the current note if no other note id is specified.
 
-Commands
-=========
+## Commands
 
 Commands in zk can typically be abbreviated to a single letter. zk offers the following commands:
 
