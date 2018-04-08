@@ -91,6 +91,12 @@ func main() {
 		editNote(args)
 	case "print", "p":
 		printNote(args)
+	case "tree", "t":
+		printTree(args)
+	case "link":
+		linkNote(args)
+	case "unlink":
+		unlinkNote(args)
 	default:
 		if flag.NArg() == 1 {
 			id, err := strconv.Atoi(flag.Arg(0))
@@ -262,9 +268,9 @@ func showNote(args []string) {
 	// Sort the subnotes by ID
 	sort.Slice(subnotes, func(i, j int) bool { return subnotes[i].Id < subnotes[j].Id })
 
-	fmt.Printf("id:%d %s\n\n", note.Id, note.Title)
+	fmt.Printf("%d %s\n", note.Id, note.Title)
 	for _, sn := range subnotes {
-		fmt.Printf("[id:%d]    %s\n", sn.Id, sn.Title)
+		fmt.Printf("	%d %s\n", sn.Id, sn.Title)
 	}
 }
 
@@ -308,5 +314,80 @@ func printNote(args []string) {
 		io.Copy(os.Stdout, f)
 	} else {
 		log.Fatalf("couldn't read note: %v", err)
+	}
+}
+
+// Arg 0: source
+// Arg 1: target
+func linkNote(args []string) {
+	var src, dst int
+	var err error
+	if len(args) == 2 {
+		src, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("can't parse id %v: %v", args[0], err)
+		}
+		dst, err = strconv.Atoi(args[1])
+		if err != nil {
+			log.Fatalf("can't parse id %v: %v", args[1], err)
+		}
+	} else {
+		log.Fatalf("must specify source (note to be linked) and destination (note into which it will be linked)")
+	}
+	if note, ok := state.Notes[dst]; ok {
+		note.Subnotes = append(note.Subnotes, src)
+		state.Notes[dst] = note
+	}
+}
+
+// Unlink the specified note from the current note
+func unlinkNote(args []string) {
+	var err error
+	target := state.CurrentNote
+	var child int
+	if len(args) == 1 {
+		child, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("can't parse id: %v", err)
+		}
+	} else {
+		log.Fatal("must specify a note id to unlink")
+	}
+	if note, ok := state.Notes[target]; !ok {
+		children := state.Notes[target].Subnotes
+		var newChildren []int
+		for _, sn := range children {
+			if sn != child {
+				newChildren = append(newChildren, sn)
+			}
+		}
+		note.Subnotes = newChildren
+		state.Notes[target] = note
+	} else {
+		log.Fatalf("couldn't find note %v", target)
+	}
+}
+
+func printTree(args []string) {
+	var err error
+	target := 0
+	if len(args) == 1 {
+		target, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("couldn't parse note id %v: %v", args[0], err)
+		}
+	}
+	printTreeRecursive(0, target)
+}
+
+func printTreeRecursive(depth, id int) {
+	if note, ok := state.Notes[id]; ok {
+		for i := 0; i < depth; i++ {
+			fmt.Printf("	")
+		}
+		fmt.Printf("%d %s\n", note.Id, note.Title)
+		for _, sn := range note.Subnotes {
+			printTreeRecursive(depth+1, sn)
+		}
 	}
 }
