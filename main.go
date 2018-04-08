@@ -118,7 +118,7 @@ func initDeck() {
 	state.CurrentNote = 0
 	state.NextNoteId = 1
 	state.Notes = make(map[int]NoteMeta)
-	makeNote(0, "Top Level\n")
+	makeNote(0, 0, "Top Level\n")
 	writeState()
 }
 
@@ -165,7 +165,7 @@ func readNote(id int) (*Note, error) {
 }
 
 // This is called to set up the files for a new note, once the id has been determined.
-func makeNote(id int, body string) error {
+func makeNote(id int, parent int, body string) error {
 	// First verify that the id doesn't already exist
 	if m, ok := state.Notes[id]; ok {
 		return fmt.Errorf("a note with id %v already exists: %v", id, m)
@@ -176,7 +176,8 @@ func makeNote(id int, body string) error {
 		meta.Title = s.Text()
 	}
 	// TODO: the parent might not always be the current note, but for now it is
-	meta.Parent = state.CurrentNote
+	//meta.Parent = state.CurrentNote
+	meta.Parent = parent
 
 	// make the note dir
 	path := filepath.Join(zkRoot, fmt.Sprintf("%d", id))
@@ -222,6 +223,19 @@ func makeNote(id int, body string) error {
 }
 
 func newNote(args []string) {
+	var targetNote int
+	var err error
+
+	if len(args) == 0 {
+		targetNote = state.CurrentNote
+	} else if len(args) == 1 {
+		targetNote, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
+		}
+	} else {
+		log.Fatalf("usage: zk new [note]")
+	}
 	// read in a body
 	fmt.Println("Enter note; the first line will be the title. Ctrl-D when done.")
 	body, err := ioutil.ReadAll(os.Stdin)
@@ -229,7 +243,7 @@ func newNote(args []string) {
 		log.Fatal("couldn't read body text: %v", err)
 	}
 
-	err = makeNote(state.NextNoteId, string(body))
+	err = makeNote(state.NextNoteId, targetNote, string(body))
 	if err != nil {
 		log.Fatal("couldn't create note with id %v: %v", state.NextNoteId, err)
 	}
@@ -337,6 +351,10 @@ func linkNote(args []string) {
 	if note, ok := state.Notes[dst]; ok {
 		note.Subnotes = append(note.Subnotes, src)
 		state.Notes[dst] = note
+		err = writeNoteMetadata(state.Notes[dst])
+		if err != nil {
+			log.Fatalf("Failed to write back metadata: %v", err)
+		}
 	}
 }
 
@@ -353,7 +371,7 @@ func unlinkNote(args []string) {
 	} else {
 		log.Fatal("must specify a note id to unlink")
 	}
-	if note, ok := state.Notes[target]; !ok {
+	if note, ok := state.Notes[target]; ok {
 		children := state.Notes[target].Subnotes
 		var newChildren []int
 		for _, sn := range children {
@@ -363,6 +381,10 @@ func unlinkNote(args []string) {
 		}
 		note.Subnotes = newChildren
 		state.Notes[target] = note
+		err = writeNoteMetadata(state.Notes[target])
+		if err != nil {
+			log.Fatalf("Failed to write back metadata: %v", err)
+		}
 	} else {
 		log.Fatalf("couldn't find note %v", target)
 	}

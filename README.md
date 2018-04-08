@@ -11,11 +11,10 @@ zk remembers which note you've been working in. When you run a command, zk will 
 Commands in zk can typically be abbreviated to a single letter. zk offers the following commands:
 
 * `show` (`s`): show the current note's title and any subnote titles. If a note id is given as an argument, it will show that note instead
-* `new` (`n`): create a new note under the current note. zk will prompt you for a title and any additional text you want to enter into the note at this time
+* `new` (`n`): create a new note under the current note or under the specified note ID. zk will prompt you for a title and any additional text you want to enter into the note at this time
 * `edit` (`e`): edit the current note (or specify a note id as an argument to edit a different one). Uses the $EDITOR variable to determine which editor to run.
-* `print` (`p`): print out the current note or the specified note ID
-* `delete`: delete the specified note
-* `up` (`u`): move up a level in the hierarchy of notes
+* `print` (`p`): print out the current note or the specified note ID.
+* `up` (`u`): move up a level in the hierarchy of notes.
 * `<id>`: set the current note to the given id
 * `init`: set up your ~/zk directory. Only run this once!
 
