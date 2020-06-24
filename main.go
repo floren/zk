@@ -97,6 +97,10 @@ func main() {
 		linkNote(args)
 	case "unlink":
 		unlinkNote(args)
+	case "addfile":
+		addFile(args)
+	case "listfiles", "ls":
+		listFiles(args)
 	default:
 		if flag.NArg() == 1 {
 			id, err := strconv.Atoi(flag.Arg(0))
@@ -294,6 +298,86 @@ func changeLevel(id int) {
 	}
 
 	state.CurrentNote = id
+}
+
+func addFile(args []string) {
+	var err error
+	var srcPath string
+	target := state.CurrentNote
+	switch len(args) {
+	case 1:
+		// just a filename, append to current note
+		srcPath = args[0]
+	case 2:
+		// note number followed by filename
+		target, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("can't parse id: %v")
+		}
+		srcPath = args[1]
+	}
+	// Verify that the source file exists
+	_, err = os.Stat(srcPath)
+	if err != nil {
+		log.Fatalf("Cannot find source file %v: %v", err)
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		log.Fatalf("Cannot open source file %v: %v", srcPath, err)
+	}
+
+	// Verify that the destination files directory exists
+	p := filepath.Join(zkRoot, fmt.Sprintf("%d", target), "files")
+	_, err = os.Stat(p)
+	if err != nil {
+		log.Fatalf("Cannot open %v: %v", p, err)
+	}
+
+	// Copy the file into the directory
+	base := filepath.Base(srcPath)
+	if base == "." {
+		log.Fatalf("Cannot find base name for %v")
+	}
+	dstPath := filepath.Join(p, base)
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		log.Fatalf("Cannot create destination file %v: %v", dstPath, err)
+	}
+
+	_, err = io.Copy(dst, src)
+	if err != nil {
+		log.Printf("Problem copying %v to %v: %v", srcPath, dstPath, err)
+	}
+
+	// Re-read the note to update the metadata
+	n, err := readNote(target)
+	if err != nil {
+		log.Fatalf("Failed to read note %v: %v", target, err)
+	}
+	fmt.Printf("Files for [%d] %v:\n", n.Id, n.Title)
+	for _, f := range n.Files {
+		fmt.Printf("	%v\n", f)
+	}
+}
+
+func listFiles(args []string) {
+	var err error
+	target := state.CurrentNote
+	if len(args) == 1 {
+		target, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("can't parse id: %v")
+		}
+	}
+	// Re-read the note to update the metadata
+	n, err := readNote(target)
+	if err != nil {
+		log.Fatalf("Failed to read note %v: %v", target, err)
+	}
+	fmt.Printf("Files for [%d] %v:\n", n.Id, n.Title)
+	for _, f := range n.Files {
+		fmt.Printf("	%v\n", f)
+	}
 }
 
 func editNote(args []string) {
