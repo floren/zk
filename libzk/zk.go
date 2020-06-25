@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -295,4 +296,132 @@ func (z *ZK) UnlinkNote(parent, id int) error {
 	// Write state & metadata file
 	z.state.Notes[parent] = p
 	return z.writeNoteMetadata(p)
+}
+
+// AddFile copies the file at the specified path into the given note's files.
+// If dstName is not empty, the resulting file will be given that name.
+func (z *ZK) AddFile(id int, path string, dstName string) error {
+	// Make sure that note actually exists
+	dstNote, ok := z.state.Notes[id]
+	if !ok {
+		return fmt.Errorf("Note %d not found", id)
+	}
+	// Verify that the source file exists
+	var err error
+	_, err = os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("Cannot find source file %v: %v", dstName, err)
+	}
+	src, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("Cannot open source file %v: %v", path, err)
+	}
+
+	// Verify that the destination files directory exists
+	p := filepath.Join(z.root, fmt.Sprintf("%d", id), "files")
+	_, err = os.Stat(p)
+	if err != nil {
+		return fmt.Errorf("Cannot open %v: %v", p, err)
+	}
+
+	// Copy the file into the directory
+	base := dstName
+	if base == "" {
+		base = filepath.Base(path)
+		if base == "." {
+			return fmt.Errorf("Cannot find base name for %v", path)
+		}
+	}
+	// Make sure there's not already a file with that name in the destination
+	for _, f := range dstNote.Files {
+		if f == base {
+			return fmt.Errorf("File named %v already exists for note %d", base, id)
+		}
+	}
+
+	dstPath := filepath.Join(p, base)
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("Cannot create destination file %v: %v", dstPath, err)
+	}
+
+	_, err = io.Copy(dst, src)
+	if err != nil {
+		return fmt.Errorf("Problem copying %v to %v: %v", path, dstPath, err)
+	}
+
+	// Re-read the note to update the metadata
+	_, err = z.readNote(id)
+	if err != nil {
+		return fmt.Errorf("Failed to read note %v: %v", id, err)
+	}
+	return nil
+}
+
+// RemoveFile removes the specified file from the note.
+func (z *ZK) RemoveFile(id int, name string) error {
+	// Make sure that note actually exists
+	dstNote, ok := z.state.Notes[id]
+	if !ok {
+		return fmt.Errorf("Note %d not found", id)
+	}
+
+	// First remove the file from the disk
+	p := filepath.Join(z.root, fmt.Sprintf("%d", id), "files", name)
+	if err := os.Remove(p); err != nil {
+		return err
+	}
+
+	// Now take it out of the metadata
+	var newFiles []string
+	for _, f := range dstNote.Files {
+		if f != name {
+			newFiles = append(newFiles, f)
+		}
+	}
+	dstNote.Files = newFiles
+
+	// And update metadata
+	z.state.Notes[id] = dstNote
+	return z.writeNoteMetadata(dstNote)
+}
+
+// GetFilePath returns an absolute path to a given file within a note
+func (z *ZK) GetFilePath(id int, name string) (string, error) {
+	return z.getFilePath(id, name)
+}
+
+func (z *ZK) getFilePath(id int, name string) (string, error) {
+	// Make sure that note actually exists
+	_, ok := z.state.Notes[id]
+	if !ok {
+		return "", fmt.Errorf("Note %d not found", id)
+	}
+	p := filepath.Join(z.root, fmt.Sprintf("%d", id), "files", name)
+	if _, err := os.Stat(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// GetFileReader returns an io.Reader attached to the specified file within a note
+func (z *ZK) GetFileReader(id int, name string) (io.Reader, error) {
+	p, err := z.getFilePath(id, name)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(p)
+}
+
+// Rescan will attempt to re-derive the state from the contents of the zk
+// directory. Useful if you have manually messed with the directories, or
+// if things just seem out of sync.
+func (z *ZK) Rescan() error {
+	state, err := z.deriveState()
+	if err != nil {
+		// give up
+		return err
+	}
+	z.state = state
+	return nil
 }

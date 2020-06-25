@@ -23,7 +23,7 @@ func (z *ZK) readState() (err error) {
 	err = dec.Decode(&z.state)
 	if err != nil {
 		// If we couldn't decode the state, we need to try and derive it
-		err = z.deriveState()
+		z.state, err = z.deriveState()
 		if err != nil {
 			err = fmt.Errorf("couldn't parse state or derive it: %v", err)
 		}
@@ -31,8 +31,8 @@ func (z *ZK) readState() (err error) {
 	return
 }
 
-func (z *ZK) deriveState() (err error) {
-	z.state.Notes = make(map[int]NoteMeta)
+func (z *ZK) deriveState() (state zkState, err error) {
+	state.Notes = make(map[int]NoteMeta)
 	// Stat the directory
 	var contents []os.FileInfo
 	contents, err = ioutil.ReadDir(z.root)
@@ -50,9 +50,9 @@ func (z *ZK) deriveState() (err error) {
 					// oh well
 					continue
 				}
-				z.state.Notes[id] = meta
-				if id >= z.state.NextNoteId {
-					z.state.NextNoteId = id + 1
+				state.Notes[id] = meta
+				if id >= state.NextNoteId {
+					state.NextNoteId = id + 1
 				}
 			}
 		}

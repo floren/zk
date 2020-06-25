@@ -203,3 +203,65 @@ func containsSubnote(md NoteMeta, id int) bool {
 	}
 	return false
 }
+
+func TestFiles(t *testing.T) {
+	var err error
+	dir, err := ioutil.TempDir("", "zk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	if err = InitZK(dir); err != nil {
+		t.Fatal(err)
+	}
+	var z *ZK
+	if z, err = NewZK(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a note
+	if err = z.NewNote(0, "Testing\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a temp file
+	f, err := ioutil.TempFile("", "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+
+	if err = z.AddFile(1, f.Name(), "foo"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now make sure it actually got added
+	var md NoteMeta
+	if md, err = z.GetNoteMeta(1); err != nil {
+		t.Fatal(err)
+	}
+	if len(md.Files) != 1 && md.Files[0] != "foo" {
+		t.Fatalf("Got bad files list: %v", md.Files)
+	}
+
+	// Check that we can get a path to it
+	if _, err := z.GetFilePath(1, "foo"); err != nil {
+		t.Fatalf("Couldn't get path to file: %v", err)
+	}
+
+	// And remove it
+	if err = z.RemoveFile(1, "foo"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now make sure it actually got removed
+	if md, err = z.GetNoteMeta(1); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range md.Files {
+		if f == "foo" {
+			t.Fatal("File still exists!")
+		}
+	}
+}
