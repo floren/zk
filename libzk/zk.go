@@ -246,3 +246,53 @@ func (z *ZK) GetNoteBodyPath(id int) (path string, err error) {
 	path = filepath.Join(z.root, fmt.Sprintf("%d", id), "body")
 	return
 }
+
+// LinkNote links the specified note as a child of the parent note.
+func (z *ZK) LinkNote(parent, id int) error {
+	// Get the parent
+	p, ok := z.state.Notes[parent]
+	if !ok {
+		return fmt.Errorf("Parent note %d not found", parent)
+	}
+
+	// Make sure the child exists
+	_, ok = z.state.Notes[id]
+	if !ok {
+		return fmt.Errorf("Note %d not found", id)
+	}
+
+	// Add the link
+	for i := range p.Subnotes {
+		if p.Subnotes[i] == id {
+			// it's already linked
+			return nil
+		}
+	}
+	p.Subnotes = append(p.Subnotes, id)
+
+	// Write state & metadata file
+	z.state.Notes[parent] = p
+	return z.writeNoteMetadata(p)
+}
+
+// UnlinkNote removes the specified note from the parent note's subnotes
+func (z *ZK) UnlinkNote(parent, id int) error {
+	// Get the parent
+	p, ok := z.state.Notes[parent]
+	if !ok {
+		return fmt.Errorf("Parent note %d not found", parent)
+	}
+
+	// Remove the link
+	var newSubnotes []int
+	for _, sn := range p.Subnotes {
+		if sn != id {
+			newSubnotes = append(newSubnotes, sn)
+		}
+	}
+	p.Subnotes = newSubnotes
+
+	// Write state & metadata file
+	z.state.Notes[parent] = p
+	return z.writeNoteMetadata(p)
+}
