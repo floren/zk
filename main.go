@@ -9,46 +9,90 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
+
+	zk "github.com/floren/zk/libzk"
 )
 
 var (
-	zkRoot string
-	state  zkState
+	configFile = flag.String("config", "", "Path to alternate config file")
+
+	cfg Config
+	z   *zk.ZK
 )
 
-type zkState struct {
-	CurrentNote int
-	NextNoteId  int
-	Notes       map[int]NoteMeta
+type Config struct {
+	ZKRoot        string
+	CurrentNoteId int
 }
 
-type NoteMeta struct {
-	Id       int
-	Title    string
-	Subnotes []int
-	Files    []string
-	Parent   int
+func defaultConfigPath() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	pth := filepath.Join(configDir, "zk")
+	if err = os.MkdirAll(pth, 0755); err != nil {
+		return "", err
+	}
+	pth = filepath.Join(pth, "zkconfig")
+	return pth, nil
 }
 
-type Note struct {
-	NoteMeta
-	body string
+func writeConfig() error {
+	var pth string
+	var err error
+	if *configFile != `` {
+		pth = *configFile
+	} else {
+		// default
+		if pth, err = defaultConfigPath(); err != nil {
+			return fmt.Errorf("something wrong with config path: %v", err)
+		}
+	}
+	var b []byte
+	b, err = json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("JSON marshal failure: %v", err)
+	}
+	return ioutil.WriteFile(pth, b, 0600)
+}
+
+func readConfig() error {
+	// Build config path
+	var pth string
+	var err error
+	if *configFile != `` {
+		pth = *configFile
+	} else {
+		// default
+		if pth, err = defaultConfigPath(); err != nil {
+			return err
+		}
+		// If it doesn't exist, make it
+		if _, err := os.Stat(pth); os.IsNotExist(err) {
+			writeConfig()
+		}
+	}
+	// Now read it out
+	contents, err := ioutil.ReadFile(pth)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(contents, &cfg)
 }
 
 func main() {
+	var err error
 	flag.Parse()
 
 	// All commands take the form "zk <command> <command args>"
@@ -62,30 +106,52 @@ func main() {
 		args = flag.Args()[1:]
 	}
 
-	// We default to keeping notes in ~/zk, we'll add multiple decks later maybe
-	usr, err := user.Current()
-	if err != nil {
-		log.Fatalf("couldn't get user info: %v", err)
+	// If the command was "init", we actually handle that *before* reading the
+	// config file, because we're going to re-write a new config.
+	if cmd == "init" {
+		// Make sure we have a single argument
+		if len(args) != 1 {
+			log.Fatalf("Usage: zk init <path>")
+		}
+		root := args[0]
+		// First we attempt to open an existing ZK if it's pre-populated
+		if z, err = zk.NewZK(root); err != nil {
+			// NewZK failed, we better call init
+			if err := zk.InitZK(root); err != nil {
+				// If both calls failed, something bad has happened
+				log.Fatalf("Couldn't initialize new zk: %v", err)
+			}
+		}
+		// If we got this far, one of the calls succeeded.
+		cfg.ZKRoot = root
+		if err := writeConfig(); err != nil {
+			log.Fatalf("Couldn't write-back config: %v", err)
+		}
+		return
 	}
-	zkRoot = filepath.Join(usr.HomeDir, "zk")
-	os.MkdirAll(zkRoot, 0755)
 
-	if cmd != "init" {
-		readState()
+	if err := readConfig(); err != nil {
+		log.Fatalf("Failed to read config: %v", err)
 	}
+
+	if z, err = zk.NewZK(cfg.ZKRoot); err != nil {
+		log.Fatal(err)
+	}
+	defer z.Close()
 
 	switch cmd {
-	case "init":
-		initDeck()
 	case "show", "s":
 		showNote(args)
 	case "new", "n":
 		newNote(args)
 	case "up", "u":
-		if state.CurrentNote != 0 {
-			p := state.Notes[state.CurrentNote].Parent
-			changeLevel(p)
-			showNote([]string{})
+		if cfg.CurrentNoteId != 0 {
+			if md, err := z.GetNoteMeta(cfg.CurrentNoteId); err != nil {
+				log.Fatalf("Couldn't get info about current note: %v", err)
+			} else {
+				changeLevel(md.Parent)
+				showNote([]string{})
+			}
 		}
 	case "edit", "e":
 		editNote(args)
@@ -101,6 +167,8 @@ func main() {
 		addFile(args)
 	case "listfiles", "ls":
 		listFiles(args)
+	case "rescan":
+		z.Rescan()
 	default:
 		if flag.NArg() == 1 {
 			id, err := strconv.Atoi(flag.Arg(0))
@@ -115,115 +183,7 @@ func main() {
 		}
 	}
 
-	writeState()
-}
-
-func initDeck() {
-	state.CurrentNote = 0
-	state.NextNoteId = 1
-	state.Notes = make(map[int]NoteMeta)
-	makeNote(0, 0, "Top Level\n")
-	writeState()
-}
-
-// Read a note by id from the filesystem, updating our metadata map
-// as we do it.
-func readNote(id int) (*Note, error) {
-	var err error
-	result := &Note{}
-
-	// read the metadata
-	result.NoteMeta, err = readNoteMetadata(id)
-	if err != nil {
-		return nil, err
-	}
-
-	p := filepath.Join(zkRoot, fmt.Sprintf("%d", id))
-
-	// list the files -- we want to double check in case somebody did something stupid manually
-	files, err := ioutil.ReadDir(filepath.Join(p, "files"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, f := range files {
-		result.Files = append(result.Files, f.Name())
-	}
-
-	// read the body
-	b, err := ioutil.ReadFile(filepath.Join(p, "body"))
-	if err != nil {
-		return nil, err
-	}
-	result.body = string(b)
-
-	// get the title
-	s := bufio.NewScanner(bytes.NewBuffer(b))
-	if s.Scan() {
-		result.Title = s.Text()
-	}
-
-	// now write back the metadata to our map
-	state.Notes[id] = result.NoteMeta
-
-	return result, nil
-}
-
-// This is called to set up the files for a new note, once the id has been determined.
-func makeNote(id int, parent int, body string) error {
-	// First verify that the id doesn't already exist
-	if m, ok := state.Notes[id]; ok {
-		return fmt.Errorf("a note with id %v already exists: %v", id, m)
-	}
-	meta := NoteMeta{Id: id}
-	s := bufio.NewScanner(bytes.NewBuffer([]byte(body)))
-	if s.Scan() {
-		meta.Title = s.Text()
-	}
-	// TODO: the parent might not always be the current note, but for now it is
-	//meta.Parent = state.CurrentNote
-	meta.Parent = parent
-
-	// make the note dir
-	path := filepath.Join(zkRoot, fmt.Sprintf("%d", id))
-	err := os.MkdirAll(path, 0700)
-	if err != nil {
-		return err
-	}
-
-	// Now create the subdirectories and files that go in it
-	err = ioutil.WriteFile(filepath.Join(path, "body"), []byte(body), 0700)
-	if err != nil {
-		return err
-	}
-
-	err = os.MkdirAll(filepath.Join(path, "files"), 0700)
-	if err != nil {
-		return err
-	}
-
-	err = writeNoteMetadata(meta)
-	if err != nil {
-		return err
-	}
-
-	// At this point we should be ok to append ourselves to the parent's subnote list
-	// very dumb check to make sure we're not note 0 (bootstrapping
-	if id != 0 {
-		pmeta := state.Notes[meta.Parent]
-		pmeta.Subnotes = append(pmeta.Subnotes, id)
-		state.Notes[meta.Parent] = pmeta
-
-		// Now write it out to the file
-		err = writeNoteMetadata(state.Notes[meta.Parent])
-		if err != nil {
-			return err
-		}
-	}
-
-	// We've made all the files, write the metadata into the map.
-	state.Notes[id] = meta
-
-	return nil
+	writeConfig()
 }
 
 func newNote(args []string) {
@@ -231,7 +191,7 @@ func newNote(args []string) {
 	var err error
 
 	if len(args) == 0 {
-		targetNote = state.CurrentNote
+		targetNote = cfg.CurrentNoteId
 	} else if len(args) == 1 {
 		targetNote, err = strconv.Atoi(args[0])
 		if err != nil {
@@ -247,11 +207,10 @@ func newNote(args []string) {
 		log.Fatal("couldn't read body text: %v", err)
 	}
 
-	err = makeNote(state.NextNoteId, targetNote, string(body))
+	err = z.NewNote(targetNote, string(body))
 	if err != nil {
-		log.Fatal("couldn't create note with id %v: %v", state.NextNoteId, err)
+		log.Fatal("couldn't create note: %v", err)
 	}
-	state.NextNoteId++
 }
 
 func showNote(args []string) {
@@ -259,7 +218,7 @@ func showNote(args []string) {
 	var err error
 
 	if len(args) == 0 {
-		targetNote = state.CurrentNote
+		targetNote = cfg.CurrentNoteId
 	} else if len(args) == 1 {
 		targetNote, err = strconv.Atoi(args[0])
 		if err != nil {
@@ -269,14 +228,14 @@ func showNote(args []string) {
 		log.Fatalf("usage: zk show [note]")
 	}
 
-	note, err := readNote(targetNote)
+	note, err := z.GetNoteMeta(targetNote)
 	if err != nil {
 		log.Fatalf("couldn't read note: %v", err)
 	}
 
-	var subnotes []*Note
+	var subnotes []zk.NoteMeta
 	for _, n := range note.Subnotes {
-		sn, err := readNote(n)
+		sn, err := z.GetNoteMeta(n)
 		if err != nil {
 			log.Fatalf("failed to read subnote %v: %v", n, err)
 		}
@@ -293,17 +252,17 @@ func showNote(args []string) {
 }
 
 func changeLevel(id int) {
-	if _, ok := state.Notes[id]; !ok {
+	if _, err := z.GetNoteMeta(id); err != nil {
 		log.Fatalf("invalid note id %v", id)
 	}
 
-	state.CurrentNote = id
+	cfg.CurrentNoteId = id
 }
 
 func addFile(args []string) {
 	var err error
 	var srcPath string
-	target := state.CurrentNote
+	target := cfg.CurrentNoteId
 	switch len(args) {
 	case 1:
 		// just a filename, append to current note
@@ -316,41 +275,14 @@ func addFile(args []string) {
 		}
 		srcPath = args[1]
 	}
-	// Verify that the source file exists
-	_, err = os.Stat(srcPath)
-	if err != nil {
-		log.Fatalf("Cannot find source file %v: %v", err)
-	}
-	src, err := os.Open(srcPath)
-	if err != nil {
-		log.Fatalf("Cannot open source file %v: %v", srcPath, err)
-	}
-
-	// Verify that the destination files directory exists
-	p := filepath.Join(zkRoot, fmt.Sprintf("%d", target), "files")
-	_, err = os.Stat(p)
-	if err != nil {
-		log.Fatalf("Cannot open %v: %v", p, err)
-	}
-
-	// Copy the file into the directory
-	base := filepath.Base(srcPath)
-	if base == "." {
-		log.Fatalf("Cannot find base name for %v")
-	}
-	dstPath := filepath.Join(p, base)
-	dst, err := os.Create(dstPath)
-	if err != nil {
-		log.Fatalf("Cannot create destination file %v: %v", dstPath, err)
-	}
-
-	_, err = io.Copy(dst, src)
-	if err != nil {
-		log.Printf("Problem copying %v to %v: %v", srcPath, dstPath, err)
+	// Add the file
+	// TODO: allow the user to specify an alternate name
+	if err := z.AddFile(target, srcPath, ""); err != nil {
+		log.Fatalf("Failed to add file: %v", err)
 	}
 
 	// Re-read the note to update the metadata
-	n, err := readNote(target)
+	n, err := z.GetNote(target)
 	if err != nil {
 		log.Fatalf("Failed to read note %v: %v", target, err)
 	}
@@ -362,7 +294,7 @@ func addFile(args []string) {
 
 func listFiles(args []string) {
 	var err error
-	target := state.CurrentNote
+	target := cfg.CurrentNoteId
 	if len(args) == 1 {
 		target, err = strconv.Atoi(args[0])
 		if err != nil {
@@ -370,7 +302,7 @@ func listFiles(args []string) {
 		}
 	}
 	// Re-read the note to update the metadata
-	n, err := readNote(target)
+	n, err := z.GetNote(target)
 	if err != nil {
 		log.Fatalf("Failed to read note %v: %v", target, err)
 	}
@@ -382,18 +314,22 @@ func listFiles(args []string) {
 
 func editNote(args []string) {
 	var err error
-	target := state.CurrentNote
+	target := cfg.CurrentNoteId
 	if len(args) == 1 {
 		target, err = strconv.Atoi(args[0])
 		if err != nil {
 			log.Fatalf("can't parse id: %v")
 		}
 	}
+	// TODO: add editor to config
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vim"
 	}
-	p := filepath.Join(zkRoot, fmt.Sprintf("%d", target), "body")
+	p, err := z.GetNoteBodyPath(target)
+	if err != nil {
+		log.Fatalf("Couldn't get path to note body: %v", err)
+	}
 	cmd := exec.Command(editor, p)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -403,13 +339,16 @@ func editNote(args []string) {
 }
 
 func printNote(args []string) {
-	target := filepath.Join(zkRoot, fmt.Sprintf("%d", state.CurrentNote), "body")
+	var err error
+	target := cfg.CurrentNoteId
 	if len(args) == 1 {
-		target = filepath.Join(zkRoot, args[0], "body")
+		target, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("can't parse id: %v")
+		}
 	}
-	if f, err := os.Open(target); err == nil {
-		defer f.Close()
-		io.Copy(os.Stdout, f)
+	if note, err := z.GetNote(target); err == nil {
+		fmt.Print(note.Body)
 	} else {
 		log.Fatalf("couldn't read note: %v", err)
 	}
@@ -432,45 +371,35 @@ func linkNote(args []string) {
 	} else {
 		log.Fatalf("must specify source (note to be linked) and destination (note into which it will be linked)")
 	}
-	if note, ok := state.Notes[dst]; ok {
-		note.Subnotes = append(note.Subnotes, src)
-		state.Notes[dst] = note
-		err = writeNoteMetadata(state.Notes[dst])
-		if err != nil {
-			log.Fatalf("Failed to write back metadata: %v", err)
-		}
+	if err := z.LinkNote(dst, src); err != nil {
+		log.Fatalf("Failed to link %d to %d: %v", src, dst, err)
 	}
 }
 
 // Unlink the specified note from the current note
 func unlinkNote(args []string) {
 	var err error
-	target := state.CurrentNote
+	target := cfg.CurrentNoteId
 	var child int
 	if len(args) == 1 {
 		child, err = strconv.Atoi(args[0])
 		if err != nil {
 			log.Fatalf("can't parse id: %v", err)
 		}
-	} else {
-		log.Fatal("must specify a note id to unlink")
-	}
-	if note, ok := state.Notes[target]; ok {
-		children := state.Notes[target].Subnotes
-		var newChildren []int
-		for _, sn := range children {
-			if sn != child {
-				newChildren = append(newChildren, sn)
-			}
-		}
-		note.Subnotes = newChildren
-		state.Notes[target] = note
-		err = writeNoteMetadata(state.Notes[target])
+	} else if len(args) == 2 {
+		target, err = strconv.Atoi(args[0])
 		if err != nil {
-			log.Fatalf("Failed to write back metadata: %v", err)
+			log.Fatalf("can't parse id: %v", err)
+		}
+		child, err = strconv.Atoi(args[1])
+		if err != nil {
+			log.Fatalf("can't parse id: %v", err)
 		}
 	} else {
-		log.Fatalf("couldn't find note %v", target)
+		log.Fatal("Usage: zk unlink [parent] <child>")
+	}
+	if err := z.UnlinkNote(target, child); err != nil {
+		log.Fatal("Failed to unlink %d from %d: %v", child, target, err)
 	}
 }
 
@@ -487,7 +416,7 @@ func printTree(args []string) {
 }
 
 func printTreeRecursive(depth, id int) {
-	if note, ok := state.Notes[id]; ok {
+	if note, err := z.GetNoteMeta(id); err == nil {
 		for i := 0; i < depth; i++ {
 			fmt.Printf("	")
 		}
@@ -495,5 +424,7 @@ func printTreeRecursive(depth, id int) {
 		for _, sn := range note.Subnotes {
 			printTreeRecursive(depth+1, sn)
 		}
+	} else {
+		log.Fatalf("Problem getting note %d in recursive tree print: %v", id, err)
 	}
 }

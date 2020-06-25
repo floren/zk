@@ -76,6 +76,10 @@ func NewZK(root string) (z *ZK, err error) {
 	return
 }
 
+func (z *ZK) Close() {
+	z.writeState()
+}
+
 // GetNote returns the full contents of the specified note ID,
 // including the body. Unlike GetNoteMeta, it actually reads
 // from the disk and will update the in-memory state if out of sync.
@@ -123,6 +127,7 @@ func (z *ZK) readNote(id int) (result Note, err error) {
 	}
 
 	return result, nil
+
 }
 
 func (z *ZK) GetNoteMeta(id int) (md NoteMeta, err error) {
