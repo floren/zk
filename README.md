@@ -6,6 +6,8 @@ Every note gets a unique ID assigned at creation time. Notes are organized in a 
 
 zk remembers which note you've been working in. When you run a command, zk will act on the current note if no other note id is specified.
 
+The code to interact with zk's file structure is extracted into a library, [libzk](https://pkg.go.dev/github.com/floren/zk/libzk). This means if you hate the default CLI interface, you can write your own.
+
 ## Commands
 
 Commands in zk can typically be abbreviated to a single letter. zk offers the following commands:
@@ -130,3 +132,34 @@ I'll create another note under the top-level, make another note under *that* not
 
 Notes are never deleted, because a note can appear as the child of multiple other notes; deleting the actual file would leave them hanging. It is, however, possible to 'unlink' a child from the current note so it will not appear any more.
 
+## Development
+
+The implementation of zk is split out into a library, [libzk](https://pkg.go.dev/github.com/floren/zk/libzk). You first init an (empty) directory:
+
+```
+// This will create a default top-level note 0
+libzk.InitZK("/path/to/rootdir")
+```
+
+Then you can call NewZK and use it:
+
+```
+	var z *ZK
+	if z, err = NewZK("/path/to/rootdir"); err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a note as a sub-note of note 0
+	if err = z.NewNote(0, "Testing\n"); err != nil {
+		log.Fatal(err)
+	}
+
+	// Now make sure it is listed as a child of note 0
+	var md NoteMeta
+	if md, err = z.GetNoteMeta(0); err != nil {
+		log.Fatal(err)
+	}
+	if len(md.Subnotes) != 1 {
+		log.Fatalf("Wrong number of subnotes on note 0, got %d should be 1", len(md.Subnotes))
+	}
+```
