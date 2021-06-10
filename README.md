@@ -17,6 +17,7 @@ Commands in zk can typically be abbreviated to a single letter. zk offers the fo
 * `up` (`u`): move up one level in the tree. If a note is linked into multiple places, this may be confusing!
 * `print` (`p`): print out the current note or the specified note ID.
 * `tree` (`t`): show the full note tree from the root (0) or from the specified ID.
+* `grep`: find notes containing the specified regular expression, e.g. `zk grep foo` or `zk grep "foo.+bar"`.
 
 Running `zk` with no arguments will list the title of the current note and its immediate sub-notes.
 
