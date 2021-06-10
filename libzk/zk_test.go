@@ -265,3 +265,43 @@ func TestFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestGrep(t *testing.T) {
+	var err error
+	dir, err := ioutil.TempDir("", "zk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	if err = InitZK(dir); err != nil {
+		t.Fatal(err)
+	}
+	var z *ZK
+	if z, err = NewZK(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a note
+	body := `Test note title xyzzy
+This is the note. Not every line contains a match.
+There are three lines which will match a regex that consists of an x, followed by some non-space chars, followed by a y, and this is not one.
+But this line matches: x12y
+And xFFFF*y matches too, as does the title.`
+	if err = z.NewNote(0, body); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now do a grep
+	var r chan *GrepResult
+	if r, err = z.Grep(`x\S+y`, []int{}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	for _ = range r {
+		count++
+	}
+	if count != 3 {
+		t.Fatalf("Got bad results, expected 3 got %v\n", count)
+	}
+}

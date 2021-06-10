@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	zk "github.com/floren/zk/libzk"
 )
@@ -167,6 +168,8 @@ func main() {
 		addFile(args)
 	case "listfiles", "ls":
 		listFiles(args)
+	case "grep":
+		grep(args)
 	case "rescan":
 		z.Rescan()
 	default:
@@ -426,5 +429,21 @@ func printTreeRecursive(depth, id int) {
 		}
 	} else {
 		log.Fatalf("Problem getting note %d in recursive tree print: %v", id, err)
+	}
+}
+
+func grep(args []string) {
+	if len(args) == 0 {
+		log.Fatalf("Must give a pattern to grep for")
+	}
+	// Just in case somebody leaves off quotes, we'll just join all args by space
+	pattern := strings.Join(args, " ")
+
+	if c, err := z.Grep(pattern, []int{}); err != nil {
+		log.Fatal(err)
+	} else {
+		for r := range c {
+			fmt.Printf("%d [%v]: %s\n", r.Note.Id, r.Note.Title, r.Line)
+		}
 	}
 }

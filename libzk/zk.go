@@ -10,6 +10,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 type zkState struct {
@@ -429,4 +431,101 @@ func (z *ZK) Rescan() error {
 	}
 	z.state = state
 	return nil
+}
+
+// GrepResult contains a single matching line returned from the Grep function.
+// The Note field is the id of the note which matched
+// The Line field is the text of the note which matched.
+type GrepResult struct {
+	Note  NoteMeta
+	Line  string
+	Error error
+}
+
+type oneGrep struct {
+	c chan *GrepResult
+}
+
+func (z *ZK) grep(n NoteMeta, pattern *regexp.Regexp, c chan *oneGrep) {
+	// Create a channel of GrepResults and hand it back up to the master routine
+	res := make(chan *GrepResult)
+	defer close(res)
+	c <- &oneGrep{res}
+
+	// Get a reader on the note body
+	p := filepath.Join(z.root, fmt.Sprintf("%d", n.Id), "body")
+	f, err := os.Open(p)
+	if err != nil {
+		res <- &GrepResult{Note: n, Error: err}
+		return
+	}
+	defer f.Close()
+
+	// Now walk it, looking for any matching lines
+	rdr := bufio.NewReader(f)
+	for {
+		if s, err := rdr.ReadString('\n'); err != nil && err != io.EOF {
+			// Legit error, pass it up
+			res <- &GrepResult{Note: n, Error: err}
+		} else {
+			if pattern.MatchString(s) {
+				// match!
+				res <- &GrepResult{Note: n, Line: strings.TrimSuffix(s, "\n")}
+			}
+			if err == io.EOF {
+				break
+			}
+		}
+	}
+}
+
+// Grep searches note bodies for a regular expression and returns a channel of *GrepResult.
+// If the notes parameter is non-empty, it will restrict the search to only the specified note IDs.
+func (z *ZK) Grep(pattern string, notes []int) (c chan *GrepResult, err error) {
+	c = make(chan *GrepResult, 1024)
+	results := make(chan *oneGrep)
+
+	// Check the regular expression
+	var re *regexp.Regexp
+	if re, err = regexp.Compile(pattern); err != nil {
+		return
+	}
+
+	// Figure out which notes we're working with. If none were passed, use all of them.
+	if len(notes) == 0 {
+		for _, v := range z.state.Notes {
+			notes = append(notes, v.Id)
+		}
+	}
+	var toSearch []NoteMeta
+	for _, n := range notes {
+		if md, ok := z.state.Notes[n]; ok {
+			toSearch = append(toSearch, md)
+		}
+	}
+
+	// Fire off a goroutine for each note
+	for _, n := range toSearch {
+		go z.grep(n, re, results)
+	}
+
+	// Now fire the goroutine which relays from those notes to the reader.
+	// We do it like this so we get all results from one note at a time.
+	go func() {
+		nGrep := len(toSearch)
+
+		for g := range results {
+			for r := range g.c {
+				c <- r
+			}
+			nGrep--
+			if nGrep == 0 {
+				break
+			}
+		}
+
+		close(c)
+	}()
+
+	return c, nil
 }
