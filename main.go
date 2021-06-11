@@ -181,8 +181,11 @@ func main() {
 			// we've been given an argument, try to change to the specified note
 			changeLevel(id)
 			showNote([]string{})
-		} else {
+		} else if flag.NArg() == 0 {
+			// just show the current note
 			showNote([]string{})
+		} else {
+			log.Fatalf("Invalid command")
 		}
 	}
 
@@ -390,16 +393,16 @@ func unlinkNote(args []string) {
 			log.Fatalf("can't parse id: %v", err)
 		}
 	} else if len(args) == 2 {
-		target, err = strconv.Atoi(args[0])
+		child, err = strconv.Atoi(args[0])
 		if err != nil {
 			log.Fatalf("can't parse id: %v", err)
 		}
-		child, err = strconv.Atoi(args[1])
+		target, err = strconv.Atoi(args[1])
 		if err != nil {
 			log.Fatalf("can't parse id: %v", err)
 		}
 	} else {
-		log.Fatal("Usage: zk unlink [parent] <child>")
+		log.Fatal("Usage: zk unlink <child> [parent] ")
 	}
 	if err := z.UnlinkNote(target, child); err != nil {
 		log.Fatal("Failed to unlink %d from %d: %v", child, target, err)

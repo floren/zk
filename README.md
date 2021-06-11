@@ -26,8 +26,8 @@ Running `zk` with no arguments will list the title of the current note and its i
 ### Creating and Editing Notes
 * `new` (`n`): create a new note under the current note or under the specified note ID. zk will prompt you for a title and any additional text you want to enter into the note at this time.
 * `edit` (`e`): edit the current note (or specify a note id as an argument to edit a different one). Uses the $EDITOR variable to determine which editor to run.
-* `link`: link a note as a sub-note of another. `zk link 22 3` will make note 22 a sub-note of note 3.
-* `unlink`: unlink a sub-note from the current note, e.g. `zk unlink 22`
+* `link`: link a note as a sub-note of another. `zk link 22 3` will make note 22 a sub-note of note 3. `zk link 22` will make note 22 a sub-note of the *current* note.
+* `unlink`: unlink a sub-note from the current note, e.g. `zk unlink 22`. As with the link command, `zk unlink 22 3` will *remove* 22 as a sub-note of note 3.
 
 ### Misc.
 * `init`: takes a file path as an argument, sets up a zk in that directory. If the directory already contains zk files, simply sets that as the new default.
