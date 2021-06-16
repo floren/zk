@@ -170,8 +170,12 @@ func main() {
 		listFiles(args)
 	case "grep":
 		grep(args)
+	case "tgrep":
+		tgrep(args)
 	case "rescan":
 		z.Rescan()
+	case "orphans":
+		orphans(args)
 	default:
 		if flag.NArg() == 1 {
 			id, err := strconv.Atoi(flag.Arg(0))
@@ -213,10 +217,11 @@ func newNote(args []string) {
 		log.Fatal("couldn't read body text: %v", err)
 	}
 
-	err = z.NewNote(targetNote, string(body))
+	newId, err := z.NewNote(targetNote, string(body))
 	if err != nil {
 		log.Fatal("couldn't create note: %v", err)
 	}
+	fmt.Printf("Created new note %v", newId)
 }
 
 func showNote(args []string) {
@@ -426,13 +431,17 @@ func printTreeRecursive(depth, id int) {
 		for i := 0; i < depth; i++ {
 			fmt.Printf("	")
 		}
-		fmt.Printf("%d %s\n", note.Id, note.Title)
+		fmt.Printf("%s\n", formatNoteSummary(note))
 		for _, sn := range note.Subnotes {
 			printTreeRecursive(depth+1, sn)
 		}
 	} else {
 		log.Fatalf("Problem getting note %d in recursive tree print: %v", id, err)
 	}
+}
+
+func formatNoteSummary(note zk.NoteMeta) string {
+	return fmt.Sprintf("%d %s", note.Id, note.Title)
 }
 
 func grep(args []string) {
@@ -448,5 +457,42 @@ func grep(args []string) {
 		for r := range c {
 			fmt.Printf("%d [%v]: %s\n", r.Note.Id, r.Note.Title, r.Line)
 		}
+	}
+}
+
+func tgrep(args []string) {
+	if len(args) == 0 {
+		log.Fatalf("Syntax: zk tgrep [root id] <pattern>")
+	}
+	// Root ID is optional (current note is implied) so let's check
+	root := cfg.CurrentNoteId
+	if len(args) >= 2 {
+		// Try to parse the first arg as an int
+		if id, err := strconv.Atoi(args[0]); err == nil {
+			root = id
+			args = args[1:]
+		}
+	}
+	// Just in case somebody leaves off quotes, we'll just join all args by space
+	pattern := strings.Join(args, " ")
+
+	if c, err := z.TreeGrep(pattern, root); err != nil {
+		log.Fatal(err)
+	} else {
+		for r := range c {
+			fmt.Printf("%d [%v]: %s\n", r.Note.Id, r.Note.Title, r.Line)
+		}
+	}
+}
+	
+
+
+func orphans(args []string) {
+	if len(args) != 0 {
+		log.Fatalf("orphans command takes no arguments")
+	}
+	orphans := z.GetOrphans()
+	for _, o := range orphans {
+		fmt.Println(formatNoteSummary(o))
 	}
 }
