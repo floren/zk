@@ -165,13 +165,14 @@ func (z *ZK) GetNoteMeta(id int) (md NoteMeta, err error) {
 	return
 }
 
-func (z *ZK) NewNote(parent int, body string) error {
-	err := z.makeNote(z.state.NextNoteId, parent, body)
+func (z *ZK) NewNote(parent int, body string) (int, error) {
+	id := z.state.NextNoteId
+	err := z.makeNote(id, parent, body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	z.state.NextNoteId++
-	return z.writeState()
+	return id, z.writeState()
 }
 
 // makeNote does NOT write the state file
@@ -310,6 +311,11 @@ func (z *ZK) LinkNote(parent, id int) error {
 
 // UnlinkNote removes the specified note from the parent note's subnotes
 func (z *ZK) UnlinkNote(parent, id int) error {
+	// Get the child
+	child, ok := z.state.Notes[id]
+	if !ok {
+		return fmt.Errorf("Child note %d not found", id)
+	}
 	// Get the parent
 	p, ok := z.state.Notes[parent]
 	if !ok {
@@ -324,6 +330,14 @@ func (z *ZK) UnlinkNote(parent, id int) error {
 		}
 	}
 	p.Subnotes = newSubnotes
+
+	// If we've just removed the "parent" note, re-parent it to note 0.
+	// We could look for other notes with this as a subnote, but
+	// that seems more confusing to users.
+	if parent == child.Parent {
+		child.Parent = 0
+		z.state.Notes[id] = child
+	}
 
 	// Write state & metadata file
 	z.state.Notes[parent] = p
@@ -504,6 +518,32 @@ func (z *ZK) grep(n NoteMeta, pattern *regexp.Regexp, c chan *oneGrep) {
 	}
 }
 
+// TreeGrep searches note bodies for a regular expression. It takes as arguments
+// a regular expression string and a note ID. That note, and the entire tree of
+// subnotes below it, are searched.
+func (z *ZK) TreeGrep(pattern string, root int) (c chan *GrepResult, err error) {
+	// Make sure the specified root actually exists
+	if _, ok := z.state.Notes[root]; !ok {
+		err = fmt.Errorf("Note %d does not exist", root)
+		return
+	}
+	// Simple lambda function to walk the tree and build up a list of notes to search
+	var f func(int) []int
+	f = func(id int) []int {
+		note, ok := z.state.Notes[id]
+		if !ok {
+			// this shouldn't happen
+			return []int{}
+		}
+		l := []int{note.Id}
+		for _, n := range note.Subnotes {
+			l = append(l, f(n)...)
+		}
+		return l
+	}
+	return z.Grep(pattern, f(root))
+}
+
 // Grep searches note bodies for a regular expression and returns a channel of *GrepResult.
 // If the notes parameter is non-empty, it will restrict the search to only the specified note IDs.
 func (z *ZK) Grep(pattern string, notes []int) (c chan *GrepResult, err error) {
@@ -553,4 +593,29 @@ func (z *ZK) Grep(pattern string, notes []int) (c chan *GrepResult, err error) {
 	}()
 
 	return c, nil
+}
+
+// GetOrphans returns a list of "orphaned" notes, notes which are not the subnote of
+// any other note.
+func (z *ZK) GetOrphans() (orphans []NoteMeta) {
+	// For every note...
+orphanLoop:
+	for id, meta := range z.state.Notes {
+		// Note 0 can never be an orphan.
+		if id == 0 {
+			continue orphanLoop
+		}
+		// walk the set of notes *again* to see if it's a sub-note of any of them.
+		for _, candidate := range z.state.Notes {
+			for i := range candidate.Subnotes {
+				if candidate.Subnotes[i] == id {
+					// We found the ID in a list of subnotes, on to the next potential orphan!
+					continue orphanLoop
+				}
+			}
+		}
+		// If we got this far, the note was not a subnote of *any* other note.
+		orphans = append(orphans, meta)
+	}
+	return
 }

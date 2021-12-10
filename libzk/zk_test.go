@@ -38,7 +38,7 @@ func TestNewNote(t *testing.T) {
 	}
 
 	// Create a note
-	if err = z.NewNote(0, "Testing\n"); err != nil {
+	if _, err = z.NewNote(0, "Testing\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,7 +74,7 @@ func TestUpdateNote(t *testing.T) {
 	}
 
 	// Create a note
-	if err = z.NewNote(0, "Testing\n"); err != nil {
+	if _, err = z.NewNote(0, "Testing\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -112,12 +112,12 @@ func TestLinkNote(t *testing.T) {
 	}
 
 	// Create a note
-	if err = z.NewNote(0, "Testing\n"); err != nil {
+	if _, err = z.NewNote(0, "Testing\n"); err != nil {
 		t.Fatal(err)
 	}
 
 	// And then make a child of that note
-	if err = z.NewNote(1, "Child note\n"); err != nil {
+	if _, err = z.NewNote(1, "Child note\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,17 +159,22 @@ func TestUnlinkNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a note
-	if err = z.NewNote(0, "Testing\n"); err != nil {
+	// Create a new note. Its ID will be 1.
+	if _, err = z.NewNote(0, "Testing\n"); err != nil {
 		t.Fatal(err)
 	}
 
 	// And then make a child of that note
-	if err = z.NewNote(1, "Child note\n"); err != nil {
+	if _, err = z.NewNote(1, "Child note\n"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Now link the new note (id will be 2) to note 0
+	// Tree now looks like this:
+	// 0
+	// 	1
+	// 		2
+	// 	2
 	if err = z.LinkNote(0, 2); err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +197,17 @@ func TestUnlinkNote(t *testing.T) {
 	}
 	if containsSubnote(md, 2) {
 		t.Fatalf("Note 0 still improperly contains note 2: %+v", md)
+	}
+
+	// Now we'll also unlink note 2 from note 1, orphaning it.
+	if err = z.UnlinkNote(1, 2); err != nil {
+		t.Fatal(err)
+	}
+	// Make sure it comes back in the list of orphans
+	if orphans := z.GetOrphans(); len(orphans) != 1 {
+		t.Fatalf("Got wrong number of orphans, expected 1 got %v (list: %v)", len(orphans), orphans)
+	} else if orphans[0].Id != 2 {
+		t.Fatalf("Got the wrong orphan back: %v", orphans[0])
 	}
 }
 
@@ -221,7 +237,7 @@ func TestFiles(t *testing.T) {
 	}
 
 	// Create a note
-	if err = z.NewNote(0, "Testing\n"); err != nil {
+	if _, err = z.NewNote(0, "Testing\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -288,7 +304,7 @@ This is the note. Not every line contains a match.
 There are three lines which will match a regex that consists of an x, followed by some non-space chars, followed by a y, and this is not one.
 But this line matches: x12y
 And xFFFF*y matches too, as does the title.`
-	if err = z.NewNote(0, body); err != nil {
+	if _, err = z.NewNote(0, body); err != nil {
 		t.Fatal(err)
 	}
 
