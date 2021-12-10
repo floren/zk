@@ -27,6 +27,26 @@ type NoteMeta struct {
 	Parent   int
 }
 
+func (o *NoteMeta) Equal(n NoteMeta) bool {
+	if o.Id != n.Id || o.Title != n.Title || o.Parent != n.Parent {
+		return false
+	}
+	if len(o.Subnotes) != len(n.Subnotes) || len(o.Files) != len(n.Files) {
+		return false
+	}
+	for i := range o.Subnotes {
+		if o.Subnotes[i] != n.Subnotes[i] {
+			return false
+		}
+	}
+	for i := range o.Files {
+		if o.Files[i] != n.Files[i] {
+			return false
+		}
+	}
+	return true
+}
+
 type Note struct {
 	NoteMeta
 	Body string
@@ -98,6 +118,8 @@ func (z *ZK) readNote(id int) (result Note, err error) {
 		return
 	}
 
+	orig := result.NoteMeta
+
 	p := filepath.Join(z.root, fmt.Sprintf("%d", id))
 	// list the files -- we want to double check in case somebody did something stupid manually
 	result.Files = []string{}
@@ -122,14 +144,17 @@ func (z *ZK) readNote(id int) (result Note, err error) {
 		result.Title = s.Text()
 	}
 
-	// now write back the metadata to our map
+	// now write the metadata to our state map
 	z.state.Notes[id] = result.NoteMeta
-	if err := z.writeNoteMetadata(result.NoteMeta); err != nil {
-		return result, err
+
+	// If there was a change to the metadata, write it back
+	if !orig.Equal(result.NoteMeta) {
+		if err := z.writeNoteMetadata(result.NoteMeta); err != nil {
+			return result, err
+		}
 	}
 
 	return result, nil
-
 }
 
 func (z *ZK) GetNoteMeta(id int) (md NoteMeta, err error) {
