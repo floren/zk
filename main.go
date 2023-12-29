@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -22,6 +21,7 @@ import (
 	"strings"
 
 	zk "github.com/floren/zk/libzk"
+	"io"
 )
 
 var (
@@ -65,7 +65,7 @@ func writeConfig() error {
 	if err != nil {
 		return fmt.Errorf("JSON marshal failure: %v", err)
 	}
-	return ioutil.WriteFile(pth, b, 0600)
+	return os.WriteFile(pth, b, 0600)
 }
 
 func readConfig() error {
@@ -85,7 +85,7 @@ func readConfig() error {
 		}
 	}
 	// Now read it out
-	contents, err := ioutil.ReadFile(pth)
+	contents, err := os.ReadFile(pth)
 	if err != nil {
 		return err
 	}
@@ -156,6 +156,8 @@ func main() {
 		}
 	case "edit", "e":
 		editNote(args)
+	case "append", "a":
+		appendNote(args)
 	case "print", "p":
 		printNote(args)
 	case "tree", "t":
@@ -211,15 +213,15 @@ func newNote(args []string) {
 		log.Fatalf("usage: zk new [note]")
 	}
 	// read in a body
-	fmt.Println("Enter note; the first line will be the title. Ctrl-D when done.")
-	body, err := ioutil.ReadAll(os.Stdin)
+	fmt.Fprintf(os.Stderr, "Enter note; the first line will be the title. Ctrl-D when done.\n")
+	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		log.Fatal("couldn't read body text: %v", err)
+		log.Fatalf("couldn't read body text: %v", err)
 	}
 
 	newId, err := z.NewNote(targetNote, string(body))
 	if err != nil {
-		log.Fatal("couldn't create note: %v", err)
+		log.Fatalf("couldn't create note: %v", err)
 	}
 	fmt.Printf("Created new note %v", newId)
 }
@@ -282,7 +284,7 @@ func addFile(args []string) {
 		// note number followed by filename
 		target, err = strconv.Atoi(args[0])
 		if err != nil {
-			log.Fatalf("can't parse id: %v")
+			log.Fatalf("can't parse id %v: %v", args[0], err)
 		}
 		srcPath = args[1]
 	}
@@ -309,7 +311,7 @@ func listFiles(args []string) {
 	if len(args) == 1 {
 		target, err = strconv.Atoi(args[0])
 		if err != nil {
-			log.Fatalf("can't parse id: %v")
+			log.Fatalf("can't parse id %v: %v", args[0], err)
 		}
 	}
 	// Re-read the note to update the metadata
@@ -329,7 +331,7 @@ func editNote(args []string) {
 	if len(args) == 1 {
 		target, err = strconv.Atoi(args[0])
 		if err != nil {
-			log.Fatalf("can't parse id: %v")
+			log.Fatalf("can't parse id %v: %v", args[0], err)
 		}
 	}
 	// TODO: add editor to config
@@ -347,6 +349,35 @@ func editNote(args []string) {
 	cmd.Stderr = os.Stderr
 	cmd.Start()
 	cmd.Wait()
+}
+
+func appendNote(args []string) {
+	var err error
+	target := cfg.CurrentNoteId
+	if len(args) == 1 {
+		target, err = strconv.Atoi(args[0])
+		if err != nil {
+			log.Fatalf("can't parse id %v: %v", args[0], err)
+		}
+	}
+	p, err := z.GetNoteBodyPath(target)
+	if err != nil {
+		log.Fatalf("Couldn't get path to note body: %v", err)
+	}
+	w, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Couldn't open note body: %v", err)
+	}
+	defer w.Close()
+
+	// Now read from stdin
+	fmt.Fprintf(os.Stderr, "Ctrl-D when done.\n")
+	body, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatalf("couldn't read body text: %v", err)
+	}
+	w.Write(body)
+	w.Sync()
 }
 
 func printNote(args []string) {
@@ -484,8 +515,6 @@ func tgrep(args []string) {
 		}
 	}
 }
-	
-
 
 func orphans(args []string) {
 	if len(args) != 0 {
