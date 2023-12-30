@@ -20,17 +20,26 @@ Commands in zk can typically be abbreviated to a single letter. zk offers the fo
 * `print` (`p`): print out the current note or the specified note ID.
 * `tree` (`t`): show the full note tree from the root (0) or from the specified ID.
 * `grep`: find notes containing the specified regular expression, e.g. `zk grep foo` or `zk grep "foo.+bar"`.
+* `tgrep`: file notes containing the specified regular expression under the current or specified note, e.g. `zk tgrep 17 foobar` to find "foobar" in note 17 or its sub-notes.
 
 Running `zk` with no arguments will list the title of the current note and its immediate sub-notes.
 
 ### Creating and Editing Notes
 * `new` (`n`): create a new note under the current note or under the specified note ID. zk will prompt you for a title and any additional text you want to enter into the note at this time.
 * `edit` (`e`): edit the current note (or specify a note id as an argument to edit a different one). Uses the $EDITOR variable to determine which editor to run.
+* `append` (`a`): append to the current note (or specified note id). Reads from standard input.
 * `link`: link a note as a sub-note of another. `zk link 22 3` will make note 22 a sub-note of note 3. `zk link 22` will make note 22 a sub-note of the *current* note.
 * `unlink`: unlink a sub-note from the current note, e.g. `zk unlink 22`. As with the link command, `zk unlink 22 3` will *remove* 22 as a sub-note of note 3.
 
+### Aliases
+* `alias`: define a new alias, a human-friendly name for a particular note, e.g. `zk alias 7 todo`; you can then use "todo" in place of "7" in future commands.
+* `unalias`: remove an alias, e.g. `zk unalias todo`.
+* `aliases`: list existing aliases.
+
 ### Misc.
 * `init`: takes a file path as an argument, sets up a zk in that directory. If the directory already contains zk files, simply sets that as the new default.
+* `orphans`: list notes with no parents (excluding note 0). Unlinking a note from the tree entirely makes it an "orphan" and hides it; this lets you see what has been orphaned.
+* `rescan`: attempts to re-derive the state from the contents of the zk directory. Shouldn't be necessary, but try this if commands like `zk tree` look weird.
 
 ## Installation and setup
 
@@ -130,7 +139,7 @@ I'll create another note under the top-level, make another note under *that* not
 		3 Foo
 			4 Bar
 
-Notes are never deleted, because a note can appear as the child of multiple other notes; deleting the actual file would leave them hanging. It is, however, possible to 'unlink' a child from the current note so it will not appear any more.
+Notes are never deleted, because a note can appear as the child of multiple other notes; deleting the actual file would leave them hanging. It is, however, possible to 'unlink' a child from the current note so it will not appear any more. This makes it an "orphan"; use `zk orphans` to list orphaned notes.
 
 ## Development
 
