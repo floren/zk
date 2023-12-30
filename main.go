@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	zk "github.com/floren/zk/libzk"
@@ -178,11 +177,17 @@ func main() {
 		z.Rescan()
 	case "orphans":
 		orphans(args)
+	case "alias":
+		alias(args)
+	case "unalias":
+		unalias(args)
+	case "aliases":
+		aliases()
 	default:
 		if flag.NArg() == 1 {
-			id, err := strconv.Atoi(flag.Arg(0))
+			id, _, err := getNoteId(flag.Args())
 			if err != nil {
-				log.Fatalf("couldn't parse id: %v", err)
+				log.Fatalf("couldn't parse %v as a note id: %v", flag.Arg(0), err)
 			}
 			// we've been given an argument, try to change to the specified note
 			changeLevel(id)
@@ -198,19 +203,36 @@ func main() {
 	writeConfig()
 }
 
+// getNoteId takes a slice of arguments and, assuming the first
+// argument is a node name, returns the corresponding numeric id along
+// with the rest of the slice.  If the length of the slice is zero, it
+// returns the current note ID.  If there was an error parsing the
+// argument, it returns the error and the returned slice is unchanged.
+func getNoteId(args []string) (id int, rest []string, err error) {
+	// if they specified nothing, just return 0
+	if len(args) == 0 {
+		id = cfg.CurrentNoteId
+		return
+	}
+	id, err = z.ResolveNoteId(args[0])
+	if err != nil {
+		return
+	}
+	rest = args[1:]
+	return
+}
+
 func newNote(args []string) {
 	var targetNote int
 	var err error
 
-	if len(args) == 0 {
-		targetNote = cfg.CurrentNoteId
-	} else if len(args) == 1 {
-		targetNote, err = strconv.Atoi(args[0])
-		if err != nil {
-			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
-		}
-	} else {
-		log.Fatalf("usage: zk new [note]")
+	targetNote, args, err = getNoteId(args)
+	if err != nil {
+		log.Fatalf("failed to parse specified note %v: %v", args[0], err)
+	}
+	// You're not allowed to specify any arguments after the (optional) parent ID
+	if len(args) != 0 {
+		log.Fatalf("usage: zk new [parent]")
 	}
 	// read in a body
 	fmt.Fprintf(os.Stderr, "Enter note; the first line will be the title. Ctrl-D when done.\n")
@@ -223,21 +245,19 @@ func newNote(args []string) {
 	if err != nil {
 		log.Fatalf("couldn't create note: %v", err)
 	}
-	fmt.Printf("Created new note %v", newId)
+	fmt.Fprintf(os.Stderr, "Created new note %v\n", newId)
 }
 
 func showNote(args []string) {
 	var targetNote int
 	var err error
 
-	if len(args) == 0 {
-		targetNote = cfg.CurrentNoteId
-	} else if len(args) == 1 {
-		targetNote, err = strconv.Atoi(args[0])
-		if err != nil {
-			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
-		}
-	} else {
+	targetNote, args, err = getNoteId(args)
+	if err != nil {
+		log.Fatalf("failed to parse specified note %v: %v", args[0], err)
+	}
+	// You're not allowed to specify any arguments after the (optional) note ID
+	if len(args) != 0 {
 		log.Fatalf("usage: zk show [note]")
 	}
 
@@ -282,11 +302,13 @@ func addFile(args []string) {
 		srcPath = args[0]
 	case 2:
 		// note number followed by filename
-		target, err = strconv.Atoi(args[0])
+		target, args, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id %v: %v", args[0], err)
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
 		}
-		srcPath = args[1]
+		srcPath = args[0]
+	default:
+		log.Fatalf("usage: zk addfile [note id] <filename>")
 	}
 	// Add the file
 	// TODO: allow the user to specify an alternate name
@@ -309,9 +331,9 @@ func listFiles(args []string) {
 	var err error
 	target := cfg.CurrentNoteId
 	if len(args) == 1 {
-		target, err = strconv.Atoi(args[0])
+		target, _, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id %v: %v", args[0], err)
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
 		}
 	}
 	// Re-read the note to update the metadata
@@ -329,9 +351,9 @@ func editNote(args []string) {
 	var err error
 	target := cfg.CurrentNoteId
 	if len(args) == 1 {
-		target, err = strconv.Atoi(args[0])
+		target, _, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id %v: %v", args[0], err)
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
 		}
 	}
 	// TODO: add editor to config
@@ -355,9 +377,9 @@ func appendNote(args []string) {
 	var err error
 	target := cfg.CurrentNoteId
 	if len(args) == 1 {
-		target, err = strconv.Atoi(args[0])
+		target, _, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id %v: %v", args[0], err)
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
 		}
 	}
 	p, err := z.GetNoteBodyPath(target)
@@ -384,9 +406,9 @@ func printNote(args []string) {
 	var err error
 	target := cfg.CurrentNoteId
 	if len(args) == 1 {
-		target, err = strconv.Atoi(args[0])
+		target, _, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id: %v")
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
 		}
 	}
 	if note, err := z.GetNote(target); err == nil {
@@ -402,13 +424,13 @@ func linkNote(args []string) {
 	var src, dst int
 	var err error
 	if len(args) == 2 {
-		src, err = strconv.Atoi(args[0])
+		src, args, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id %v: %v", args[0], err)
+			log.Fatalf("failed to parse source note %v: %v", args[0], err)
 		}
-		dst, err = strconv.Atoi(args[1])
+		dst, args, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id %v: %v", args[1], err)
+			log.Fatalf("failed to parse destination note %v: %v", args[0], err)
 		}
 	} else {
 		log.Fatalf("must specify source (note to be linked) and destination (note into which it will be linked)")
@@ -424,24 +446,24 @@ func unlinkNote(args []string) {
 	target := cfg.CurrentNoteId
 	var child int
 	if len(args) == 1 {
-		child, err = strconv.Atoi(args[0])
+		child, args, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id: %v", err)
+			log.Fatalf("failed to parse child note %v: %v", args[0], err)
 		}
 	} else if len(args) == 2 {
-		child, err = strconv.Atoi(args[0])
+		child, args, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id: %v", err)
+			log.Fatalf("failed to parse child note %v: %v", args[0], err)
 		}
-		target, err = strconv.Atoi(args[1])
+		target, args, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("can't parse id: %v", err)
+			log.Fatalf("failed to parse child note %v: %v", args[0], err)
 		}
 	} else {
-		log.Fatal("Usage: zk unlink <child> [parent] ")
+		log.Fatal("usage: zk unlink <child> [parent] ")
 	}
 	if err := z.UnlinkNote(target, child); err != nil {
-		log.Fatal("Failed to unlink %d from %d: %v", child, target, err)
+		log.Fatalf("Failed to unlink %d from %d: %v", child, target, err)
 	}
 }
 
@@ -449,9 +471,9 @@ func printTree(args []string) {
 	var err error
 	target := 0
 	if len(args) == 1 {
-		target, err = strconv.Atoi(args[0])
+		target, _, err = getNoteId(args)
 		if err != nil {
-			log.Fatalf("couldn't parse note id %v: %v", args[0], err)
+			log.Fatalf("failed to parse specified note %v: %v", args[0], err)
 		}
 	}
 	printTreeRecursive(0, target)
@@ -493,15 +515,15 @@ func grep(args []string) {
 
 func tgrep(args []string) {
 	if len(args) == 0 {
-		log.Fatalf("Syntax: zk tgrep [root id] <pattern>")
+		log.Fatalf("usage: zk tgrep [root id] <pattern>")
 	}
 	// Root ID is optional (current note is implied) so let's check
 	root := cfg.CurrentNoteId
 	if len(args) >= 2 {
-		// Try to parse the first arg as an int
-		if id, err := strconv.Atoi(args[0]); err == nil {
+		// Try to parse the first arg as a node ID
+		if id, nargs, err := getNoteId(args); err == nil {
 			root = id
-			args = args[1:]
+			args = nargs
 		}
 	}
 	// Just in case somebody leaves off quotes, we'll just join all args by space
@@ -523,5 +545,38 @@ func orphans(args []string) {
 	orphans := z.GetOrphans()
 	for _, o := range orphans {
 		fmt.Println(formatNoteSummary(o))
+	}
+}
+
+func alias(args []string) {
+	var targetNote int
+	var err error
+
+	if len(args) != 2 {
+		log.Fatalf("usage: zk alias <id> <name>")
+	}
+	targetNote, args, err = getNoteId(args)
+	if err != nil {
+		log.Fatalf("failed to parse specified note %v: %v", args[0], err)
+	}
+	z.AddAlias(targetNote, args[0])
+}
+
+func unalias(args []string) {
+	if len(args) != 1 {
+		log.Fatalf("usage: zk unalias <name>")
+	}
+	z.RemoveAlias(args[0])
+}
+
+func aliases() {
+	aliases := z.Aliases()
+	for name, id := range aliases {
+		if note, err := z.GetNoteMeta(id); err != nil {
+			fmt.Fprintf(os.Stderr, "%v: points to note %v, whose metadata cannot be retrieved: %v", name, id, err)
+			continue
+		} else {
+			fmt.Printf("%v → %v\n", name, formatNoteSummary(note))
+		}
 	}
 }

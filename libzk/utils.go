@@ -28,6 +28,13 @@ func (z *ZK) readState() (err error) {
 			err = fmt.Errorf("couldn't parse state or derive it: %v", err)
 		}
 	}
+	// belt and suspenders time
+	if z.state.Aliases == nil {
+		z.state.Aliases = map[string]int{}
+	}
+	if z.state.Notes == nil {
+		z.state.Notes = map[int]NoteMeta{}
+	}
 	return
 }
 

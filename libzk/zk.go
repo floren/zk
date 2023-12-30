@@ -11,11 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 type zkState struct {
 	NextNoteId int
+	Aliases    map[string]int
 	Notes      map[int]NoteMeta
 }
 
@@ -64,6 +66,7 @@ func InitZK(root string) error {
 		root: root,
 		state: zkState{
 			NextNoteId: 1,
+			Aliases:    make(map[string]int),
 			Notes:      make(map[int]NoteMeta),
 		},
 	}
@@ -100,6 +103,20 @@ func NewZK(root string) (z *ZK, err error) {
 
 func (z *ZK) Close() {
 	z.writeState()
+}
+
+// ResolveNoteId returns the numeric ID from a string name.  You'll
+// use this to determine if the user has specified an exact ID or an
+// alias.
+func (z *ZK) ResolveNoteId(name string) (int, error) {
+	// First check if it's an alias
+	for k, v := range z.state.Aliases {
+		if k == name {
+			return v, nil
+		}
+	}
+	// Otherwise, just treat it as a number
+	return strconv.Atoi(name)
 }
 
 // GetNote returns the full contents of the specified note ID,
@@ -259,6 +276,27 @@ func (z *ZK) UpdateNote(id int, body string) error {
 	}
 
 	return nil
+}
+
+// AddAlias installs an alias, allowing the note with the given id to
+// be referred to by the specified name.
+func (z *ZK) AddAlias(id int, name string) error {
+	z.state.Aliases[name] = id
+	return z.writeState()
+}
+
+// RemoveAlias removes the specified alias.
+func (z *ZK) RemoveAlias(name string) {
+	delete(z.state.Aliases, name)
+}
+
+// Aliases returns a *copy* of the map of aliases
+func (z *ZK) Aliases() map[string]int {
+	ret := map[string]int{}
+	for k, v := range z.state.Aliases {
+		ret[k] = v
+	}
+	return ret
 }
 
 // MetadataDump returns the entire contents of the in-memory state.
