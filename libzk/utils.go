@@ -51,13 +51,13 @@ func (z *ZK) deriveState() (state zkState, err error) {
 	for i := range contents {
 		if contents[i].IsDir() {
 			if id, err := strconv.Atoi(contents[i].Name()); err == nil {
-				var meta NoteMeta
-				meta, err = z.readNoteMetadata(id)
+				var note Note
+				note, err = z.readNote(id)
 				if err != nil {
 					// oh well
 					continue
 				}
-				state.Notes[id] = meta
+				state.Notes[id] = note.NoteMeta
 				if id >= state.NextNoteId {
 					state.NextNoteId = id + 1
 				}

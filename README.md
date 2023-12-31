@@ -1,6 +1,6 @@
 # zk: fast CLI note-taking 
 
-'zk' is a tool for making and organizing hierarchical notes at the command line. It tries to stay out of your way; I wrote it because the only way I'll take notes is if it's as easy as possible.
+'zk' is a tool for making and organizing hierarchical notes at the command line. It tries to stay out of your way; I wrote it because the only way I'll take notes at all is if it's as easy as possible.
 
 Every note gets a unique ID assigned at creation time. Notes are organized in a tree, starting with note 0 at the root (note 0 is created automatically when you run `zk init`).
 
@@ -39,13 +39,13 @@ Running `zk` with no arguments will list the title of the current note and its i
 ### Misc.
 * `init`: takes a file path as an argument, sets up a zk in that directory. If the directory already contains zk files, simply sets that as the new default.
 * `orphans`: list notes with no parents (excluding note 0). Unlinking a note from the tree entirely makes it an "orphan" and hides it; this lets you see what has been orphaned.
-* `rescan`: attempts to re-derive the state from the contents of the zk directory. Shouldn't be necessary, but try this if commands like `zk tree` look weird.
+* `rescan`: attempts to re-derive the state from the contents of the zk directory. Sometimes you'll need to run this if you've changed the title (the first line) of a note.
 
 ## Installation and setup
 
-Fetch and build the code; you may also need to copy the binary somewhere if $GOPATH/bin isn't in your path:
+Fetch and build the code; make sure $GOPATH/bin is in your path!
 
-	go get github.com/floren/zk
+	go install github.com/floren/zk@latest
 
 Initialize your zk directory:
 
@@ -141,6 +141,76 @@ I'll create another note under the top-level, make another note under *that* not
 
 Notes are never deleted, because a note can appear as the child of multiple other notes; deleting the actual file would leave them hanging. It is, however, possible to 'unlink' a child from the current note so it will not appear any more. This makes it an "orphan"; use `zk orphans` to list orphaned notes.
 
+### Linking
+
+A note can appear at multiple places in the tree. Suppose I have a tree that looks like this:
+
+	$ zk t
+	0 Top Level
+			1 Go hacking
+					2 zk
+			3 Personal Projects
+					4 Bellwether mouse
+
+Since `zk` is a personal project, I'd also like it to appear as a child of note 3, so I use the `link` command:
+
+	$ zk link 2 3
+	$ zk t
+	0 Top Level
+			1 Go hacking
+					2 zk
+			3 Personal Projects
+					4 Bellwether mouse
+					2 zk
+
+If I decide that in fact, `zk` is so much a personal project that I don't even want to see it under "Go hacking" any more, I can use the `unlink` command:
+
+	$ zk unlink 2 1
+	$ zk t
+	0 Top Level
+			1 Go hacking
+			3 Personal Projects
+					4 Bellwether mouse
+					2 zk
+
+Perhaps I now realize that "Go hacking" is a silly category to have; if I unlink note 1 from note 0, it will be completely unlinked ("orphaned"). It will no longer appear in the tree.
+
+	$ zk unlink 1 0
+	$ zk t
+	0 Top Level
+			3 Personal Projects
+					4 Bellwether mouse
+					2 zk
+	$ zk orphans
+	1 Go hacking
+
+There are several advantages to unlinking notes rather than deleting them:
+
+- I can refer to "note 1" in other notes and still view it at any time, because it still exists.
+- I can reinstate it into the tree whenever I wish with a `link` command.
+- It will still be included in `zk grep` results (you can `zk tgrep 0 <pattern>` to restrict the search to only nodes actually in the tree)
+
+### Aliases
+
+Aliases let you assign human-friendly names to particular notes. Suppose I have a note where I keep a list of tasks to be done:
+
+	$ zk p 5
+	TODO
+
+	* TODO update readme
+
+The number 5 isn't particularly conducive to memory, so I use the `alias` command to give it another name, "todo":
+
+	$ zk alias 5 todo
+	$ zk aliases
+	todo → 5 TODO
+
+I can then use the string "todo" anywhere I would have referred to the note by number:
+
+	john@frodo:~/hacking/zk$ zk append todo
+	Ctrl-D when done.
+	* TODO buy milk
+
 ## Development
 
 The implementation of zk is split out into a library, [libzk](https://pkg.go.dev/github.com/floren/zk/libzk). You first init an (empty) directory:
@@ -172,3 +242,21 @@ Then you can call NewZK and use it:
 		log.Fatalf("Wrong number of subnotes on note 0, got %d should be 1", len(md.Subnotes))
 	}
 ```
+
+## Internals
+
+Notes are stored in numeric directories within your zk dir:
+
+	$ ls ~/zk
+	0/     1/     2/     3/     4/     5/     state
+
+Each note is itself a directory, containing the `body` file, the `metadata` file, and a directory named `files` containing any files you have linked with the note (experimental feature).
+
+	$ ls ~/zk/3
+	body  files  metadata
+
+The metadata file is JSON formatted:
+
+    {"Id":3,"Title":"Personal Projects","Subnotes":[4,2],"Files":[],"Parent":0}
+
+Each note has one "canonical" parent. This only comes into play with using the `zk up` command, and it faces the same issues as `cd ..` does in Unix when dealing with symlinks. 
